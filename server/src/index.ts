@@ -4,11 +4,13 @@ import dotenv from 'dotenv';
 import multer from 'multer';
 import fs from 'node:fs';
 import path from 'node:path';
+import { PrismaClient } from '@prisma/client';
 
 dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 4000);
+const prisma = new PrismaClient();
 
 app.use(cors());
 app.use(express.json());
@@ -26,53 +28,97 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage, limits: { files: 10 } });
 
-type StoredFile = {
-  id: string;
-  name: string;
-  subject: string;
-  status: string;
-  type: string;
-  size: number;
-  storedName?: string;
-};
-
-const files: StoredFile[] = [
-  { id: 'file-1', name: 'Mathematics Chapter 1.pdf', subject: 'Mathematics', status: 'ready', type: 'PDF', size: 2516582 },
-  { id: 'file-2', name: 'Physics Notes.pdf', subject: 'Physics', status: 'processing', type: 'PDF', size: 5452595 },
-  { id: 'file-3', name: 'DBMS Unit 2.docx', subject: 'DBMS', status: 'ready', type: 'DOCX', size: 1887436 },
-];
-
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, message: 'LearnPath AI API is running' });
-});
-
-app.get('/api/files', (_req, res) => {
-  res.json({ files });
-});
-
-app.post('/api/files/upload', upload.array('files', 10), (req, res) => {
-  const uploadedFiles = Array.isArray(req.files) ? req.files : [];
-  const createdFiles = uploadedFiles.map((file) => {
-    const createdFile: StoredFile = {
-      id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name: file.originalname,
-      subject: 'Uncategorized',
-      status: 'processing',
-      type: file.mimetype.split('/').pop()?.toUpperCase() || path.extname(file.originalname).slice(1).toUpperCase() || 'FILE',
-      size: file.size,
-      storedName: file.filename,
-    };
-    files.push(createdFile);
-    return {
-      originalName: file.originalname,
-      storedName: file.filename,
-      size: file.size,
-      mimetype: file.mimetype,
-      status: 'uploaded',
-    };
+async function ensureDemoUser() {
+  return prisma.user.upsert({
+    where: { email: 'demo@learnpath.ai' },
+    update: {},
+    create: {
+      email: 'demo@learnpath.ai',
+      name: 'Demo User',
+    },
   });
+}
 
-  res.status(201).json({ message: 'Files uploaded successfully', files: createdFiles });
+app.get('/api/health', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ ok: true, message: 'LearnPath AI API is running', database: 'connected' });
+  } catch {
+    res.json({ ok: true, message: 'LearnPath AI API is running', database: 'unavailable' });
+  }
+});
+
+app.get('/api/files', async (_req, res) => {
+  try {
+    const materials = await prisma.studyMaterial.findMany({
+      orderBy: { uploadDate: 'desc' },
+      select: {
+        id: true,
+        fileName: true,
+        fileType: true,
+        fileSize: true,
+        subject: true,
+        topic: true,
+        processingStatus: true,
+      },
+    });
+
+    const files = materials.map((material) => ({
+      id: material.id,
+      name: material.fileName,
+      subject: material.subject ?? material.topic ?? 'Uncategorized',
+      status: material.processingStatus === 'ready' ? 'ready' : 'processing',
+      type: material.fileType.toUpperCase(),
+      size: material.fileSize,
+    }));
+
+    res.json({ files });
+  } catch (error) {
+    console.error('Failed to load files from database:', error);
+    res.status(500).json({ message: 'Unable to load files' });
+  }
+});
+
+app.post('/api/files/upload', upload.array('files', 10), async (req, res) => {
+  const uploadedFiles = Array.isArray(req.files) ? req.files : [];
+
+  try {
+    const user = await ensureDemoUser();
+
+    const createdFiles = await Promise.all(
+      uploadedFiles.map(async (file) => {
+        const savedMaterial = await prisma.studyMaterial.create({
+          data: {
+            userId: user.id,
+            fileName: file.originalname,
+            fileType: file.mimetype || path.extname(file.originalname).slice(1).toUpperCase() || 'FILE',
+            fileSize: file.size,
+            subject: 'Uncategorized',
+            topic: 'General',
+            processingStatus: 'processing',
+            storageLocation: path.join(uploadDir, file.filename),
+          },
+        });
+
+        return {
+          id: savedMaterial.id,
+          originalName: file.originalname,
+          storedName: file.filename,
+          size: file.size,
+          mimetype: file.mimetype,
+          status: savedMaterial.processingStatus,
+        };
+      })
+    );
+
+    res.status(201).json({
+      message: 'Files uploaded successfully',
+      files: createdFiles,
+    });
+  } catch (error) {
+    console.error('Upload failed:', error);
+    res.status(500).json({ message: 'File upload failed' });
+  }
 });
 
 app.post('/api/practice/generate', (req, res) => {
@@ -83,10 +129,25 @@ app.post('/api/practice/generate', (req, res) => {
     questionCount,
     difficulty,
     questions: [
-      { id: 1, question: 'Which law explains that every action has an equal and opposite reaction?', answer: "Newton's Third Law", explanation: "Newton's Third Law states that every action creates an equal and opposite reaction." },
-      { id: 2, question: 'What is the purpose of normalization in a database?', answer: 'Reduce redundancy and improve data integrity', explanation: 'Normalization organizes data to reduce duplication and keep the system consistent.' },
+      {
+        id: 1,
+        question: 'Which law explains that every action has an equal and opposite reaction?',
+        answer: "Newton's Third Law",
+        explanation: "Newton's Third Law states that every action creates an equal and opposite reaction.",
+      },
+      {
+        id: 2,
+        question: 'What is the purpose of normalization in a database?',
+        answer: 'Reduce redundancy and improve data integrity',
+        explanation: 'Normalization organizes data to reduce duplication and keep the system consistent.',
+      },
     ],
   });
+});
+
+process.on('SIGINT', async () => {
+  await prisma.$disconnect();
+  process.exit(0);
 });
 
 app.listen(PORT, () => {
