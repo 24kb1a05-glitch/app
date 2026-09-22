@@ -21,7 +21,11 @@ CREATE TABLE "new_UserProgress" (
     "lastUpdated" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "UserProgress_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
-INSERT INTO "new_UserProgress" ("id", "userId", "topic", "mastery", "lastUpdated") SELECT "id", "userId", "topic", "mastery", "lastUpdated" FROM "UserProgress";
+
+INSERT INTO "new_UserProgress" ("id", "userId", "topic", "mastery", "lastUpdated")
+SELECT "id", "userId", "topic", "mastery", "lastUpdated"
+FROM "UserProgress";
+
 DROP TABLE "UserProgress";
 ALTER TABLE "new_UserProgress" RENAME TO "UserProgress";
 
