@@ -1,0 +1,64 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  createdAt     DateTime  @default(now())
+  files         StudyMaterial[]
+  progress      UserProgress[]
+}
+
+model StudyMaterial {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  fileName        String
+  fileType        String
+  fileSize        Int
+  uploadDate      DateTime @default(now())
+  subject         String?
+  topic           String?
+  processingStatus String   @default("queued")
+  storageLocation String
+  extractedText   ExtractedText[]
+  questions       PracticeQuestion[]
+}
+
+model ExtractedText {
+  id            String         @id @default(cuid())
+  documentId    String
+  document      StudyMaterial  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  pageNumber    Int?
+  section       String?
+  content       String
+  embedding     String?
+}
+
+model PracticeQuestion {
+  id          String         @id @default(cuid())
+  documentId  String
+  document    StudyMaterial  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  topic       String?
+  question    String
+  options     String
+  answer      String
+  explanation String
+  difficulty  String?
+}
+
+model UserProgress {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic       String
+  mastery     Float    @default(0)
+  lastUpdated DateTime @default(now())
+}
