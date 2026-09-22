@@ -41,6 +41,23 @@ async function ensureDemoUser() {
   });
 }
 
+function buildQuestions(text: string, fileName: string, questionCount: number) {
+  const passages = text
+    .replace(/\s+/g, ' ')
+    .split(/(?<=[.!?])\s+/)
+    .map((passage) => passage.trim())
+    .filter((passage) => passage.length >= 20);
+
+  const usablePassages = passages.length ? passages : [text.replace(/\s+/g, ' ').trim()];
+  return Array.from({ length: Math.min(questionCount, usablePassages.length) }, (_, index) => ({
+    id: index + 1,
+    question: `What key point is stated in this passage from ${fileName}?`,
+    answer: usablePassages[index],
+    explanation: 'This answer is taken directly from the extracted study material.',
+    source: fileName,
+  }));
+}
+
 app.get('/api/health', async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
@@ -69,7 +86,7 @@ app.get('/api/files', async (_req, res) => {
       id: material.id,
       name: material.fileName,
       subject: material.subject ?? material.topic ?? 'Uncategorized',
-      status: material.processingStatus === 'ready' ? 'ready' : material.processingStatus,
+      status: material.processingStatus,
       type: material.fileType.toUpperCase(),
       size: material.fileSize,
     }));
@@ -85,7 +102,14 @@ app.get('/api/files/:id/text', async (req, res) => {
   try {
     const material = await prisma.studyMaterial.findUnique({
       where: { id: req.params.id },
-      select: { fileName: true, processingStatus: true, extractedText: { orderBy: { pageNumber: 'asc' }, select: { content: true } } },
+      select: {
+        fileName: true,
+        processingStatus: true,
+        extractedText: {
+          orderBy: { pageNumber: 'asc' },
+          select: { content: true },
+        },
+      },
     });
 
     if (!material) {
@@ -93,7 +117,11 @@ app.get('/api/files/:id/text', async (req, res) => {
       return;
     }
 
-    res.json({ fileName: material.fileName, status: material.processingStatus, text: material.extractedText.map((part) => part.content).join('\n\n') });
+    res.json({
+      fileName: material.fileName,
+      status: material.processingStatus,
+      text: material.extractedText.map((part) => part.content).join('\n\n'),
+    });
   } catch (error) {
     console.error('Failed to load extracted text:', error);
     res.status(500).json({ message: 'Unable to load extracted text' });
@@ -131,7 +159,15 @@ app.post('/api/files/upload', upload.array('files', 10), async (req, res) => {
           },
         });
 
-        createdFiles.push({ id: savedMaterial.id, originalName: file.originalname, storedName: file.filename, size: file.size, mimetype: file.mimetype, status: savedMaterial.processingStatus, extractedCharacters: text.length });
+        createdFiles.push({
+          id: savedMaterial.id,
+          originalName: file.originalname,
+          storedName: file.filename,
+          size: file.size,
+          mimetype: file.mimetype,
+          status: savedMaterial.processingStatus,
+          extractedCharacters: text.length,
+        });
       } catch (error) {
         await fsPromises.rm(file.path, { force: true });
         throw new Error(`${file.originalname}: ${error instanceof Error ? error.message : 'text extraction failed'}`);
@@ -145,13 +181,53 @@ app.post('/api/files/upload', upload.array('files', 10), async (req, res) => {
   }
 });
 
-app.post('/api/practice/generate', (req, res) => {
-  const { mode = 'weak-topic', questionCount = 10, difficulty = 'mixed' } = req.body ?? {};
+app.post('/api/practice/generate', async (req, res) => {
+  const { fileId, questionCount = 10, difficulty = 'mixed', mode = 'weak-topic' } = req.body ?? {};
 
-  res.json({ mode, questionCount, difficulty, questions: [
-    { id: 1, question: 'Which law explains that every action has an equal and opposite reaction?', answer: "Newton's Third Law", explanation: "Newton's Third Law states that every action creates an equal and opposite reaction." },
-    { id: 2, question: 'What is the purpose of normalization in a database?', answer: 'Reduce redundancy and improve data integrity', explanation: 'Normalization organizes data to reduce duplication and keep the system consistent.' },
-  ] });
+  if (!fileId || typeof fileId !== 'string') {
+    res.status(400).json({ message: 'Choose an uploaded file before generating practice.' });
+    return;
+  }
+
+  try {
+    const material = await prisma.studyMaterial.findUnique({
+      where: { id: fileId },
+      select: {
+        fileName: true,
+        processingStatus: true,
+        extractedText: { select: { content: true } },
+      },
+    });
+
+    if (!material) {
+      res.status(404).json({ message: 'Study material not found.' });
+      return;
+    }
+
+    const text = material.extractedText.map((part) => part.content).join('\n\n').trim();
+    if (!text) {
+      res.status(422).json({ message: 'This file has no extracted text to practice.' });
+      return;
+    }
+
+    const parsedQuestionCount = Number(questionCount);
+    const safeQuestionCount = Number.isFinite(parsedQuestionCount)
+      ? Math.max(1, Math.min(Math.floor(parsedQuestionCount), 20))
+      : 10;
+    const questions = buildQuestions(text, material.fileName, safeQuestionCount);
+
+    res.json({
+      mode,
+      difficulty,
+      fileId,
+      fileName: material.fileName,
+      status: material.processingStatus,
+      questions,
+    });
+  } catch (error) {
+    console.error('Practice generation failed:', error);
+    res.status(500).json({ message: 'Unable to generate practice from this file.' });
+  }
 });
 
 process.on('SIGINT', async () => {
