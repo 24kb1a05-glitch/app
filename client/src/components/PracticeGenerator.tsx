@@ -1,6 +1,14 @@
 import { BrainCircuit, Clock3, Sparkles } from 'lucide-react';
+import type { PracticeQuestion, PracticeSummary } from '../types';
 
-export function PracticeGenerator({ questions, summary }: { questions: Array<{ id: number; question: string; answer: string; source: string }>; summary: { title: string; subtitle: string; difficulty: string; questions: number } }) {
+type PracticeGeneratorProps = {
+  questions: PracticeQuestion[];
+  summary: PracticeSummary;
+  onGenerate: () => void;
+  isBusy: boolean;
+};
+
+export function PracticeGenerator({ questions, summary, onGenerate, isBusy }: PracticeGeneratorProps) {
   return (
     <section className="grid gap-6 lg:grid-cols-[1.4fr_0.9fr]">
       <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
@@ -9,53 +17,35 @@ export function PracticeGenerator({ questions, summary }: { questions: Array<{ i
             <p className="text-xs uppercase tracking-[0.2em] text-cyan-400">Practice</p>
             <h2 className="mt-1 text-2xl font-semibold text-white">Generate study session</h2>
           </div>
-          <button className="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400">
-            Start Practice
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={isBusy}
+            className="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isBusy ? 'Generating...' : 'Start Practice'}
           </button>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <label className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-            <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-400">Mode</span>
-            <select className="w-full bg-transparent text-sm text-white outline-none">
-              <option>Weak Topic Practice</option>
-              <option>Exam Practice</option>
-              <option>Quick Practice</option>
-            </select>
-          </label>
-
-          <label className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-            <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-400">Question count</span>
-            <select className="w-full bg-transparent text-sm text-white outline-none">
-              <option>10 Questions</option>
-              <option>15 Questions</option>
-              <option>20 Questions</option>
-            </select>
-          </label>
-
-          <label className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-            <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-400">Difficulty</span>
-            <select className="w-full bg-transparent text-sm text-white outline-none">
-              <option>Mixed</option>
-              <option>Easy</option>
-              <option>Medium</option>
-              <option>Hard</option>
-            </select>
-          </label>
-        </div>
-
         <div className="mt-5 space-y-4">
-          {questions.map((item) => (
-            <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <p className="font-medium text-white">{item.question}</p>
-                <span className="rounded-full bg-cyan-500/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-cyan-300">
-                  {item.source}
-                </span>
-              </div>
-              <p className="text-sm text-slate-400">Answer: {item.answer}</p>
+          {questions.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-700 bg-slate-950/60 p-5 text-sm text-slate-400">
+              Select uploaded study files and generate a practice set.
             </div>
-          ))}
+          ) : (
+            questions.map((item) => (
+              <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <p className="font-medium text-white">{item.question}</p>
+                  <span className="rounded-full bg-cyan-500/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-cyan-300">
+                    {item.source}
+                  </span>
+                </div>
+                <p className="text-sm text-slate-400">Answer: {item.answer}</p>
+                <p className="mt-2 text-sm text-slate-500">{item.explanation}</p>
+              </div>
+            ))
+          )}
         </div>
       </div>
 
