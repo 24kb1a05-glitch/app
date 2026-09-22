@@ -3,8 +3,10 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { PrismaClient } from '@prisma/client';
+import { extractFileText } from './extractText.js';
 
 dotenv.config();
 
@@ -67,7 +69,7 @@ app.get('/api/files', async (_req, res) => {
       id: material.id,
       name: material.fileName,
       subject: material.subject ?? material.topic ?? 'Uncategorized',
-      status: material.processingStatus === 'ready' ? 'ready' : 'processing',
+      status: material.processingStatus === 'ready' ? 'ready' : material.processingStatus,
       type: material.fileType.toUpperCase(),
       size: material.fileSize,
     }));
@@ -79,14 +81,42 @@ app.get('/api/files', async (_req, res) => {
   }
 });
 
+app.get('/api/files/:id/text', async (req, res) => {
+  try {
+    const material = await prisma.studyMaterial.findUnique({
+      where: { id: req.params.id },
+      select: { fileName: true, processingStatus: true, extractedText: { orderBy: { pageNumber: 'asc' }, select: { content: true } } },
+    });
+
+    if (!material) {
+      res.status(404).json({ message: 'File not found' });
+      return;
+    }
+
+    res.json({ fileName: material.fileName, status: material.processingStatus, text: material.extractedText.map((part) => part.content).join('\n\n') });
+  } catch (error) {
+    console.error('Failed to load extracted text:', error);
+    res.status(500).json({ message: 'Unable to load extracted text' });
+  }
+});
+
 app.post('/api/files/upload', upload.array('files', 10), async (req, res) => {
   const uploadedFiles = Array.isArray(req.files) ? req.files : [];
 
+  if (!uploadedFiles.length) {
+    res.status(400).json({ message: 'At least one file is required' });
+    return;
+  }
+
   try {
     const user = await ensureDemoUser();
+    const createdFiles = [];
 
-    const createdFiles = await Promise.all(
-      uploadedFiles.map(async (file) => {
+    for (const file of uploadedFiles) {
+      try {
+        const text = await extractFileText(file);
+        if (!text) throw new Error('No text could be extracted from the file');
+
         const savedMaterial = await prisma.studyMaterial.create({
           data: {
             userId: user.id,
@@ -95,54 +125,33 @@ app.post('/api/files/upload', upload.array('files', 10), async (req, res) => {
             fileSize: file.size,
             subject: 'Uncategorized',
             topic: 'General',
-            processingStatus: 'processing',
-            storageLocation: path.join(uploadDir, file.filename),
+            processingStatus: 'ready',
+            storageLocation: file.path,
+            extractedText: { create: { content: text } },
           },
         });
 
-        return {
-          id: savedMaterial.id,
-          originalName: file.originalname,
-          storedName: file.filename,
-          size: file.size,
-          mimetype: file.mimetype,
-          status: savedMaterial.processingStatus,
-        };
-      })
-    );
+        createdFiles.push({ id: savedMaterial.id, originalName: file.originalname, storedName: file.filename, size: file.size, mimetype: file.mimetype, status: savedMaterial.processingStatus, extractedCharacters: text.length });
+      } catch (error) {
+        await fsPromises.rm(file.path, { force: true });
+        throw new Error(`${file.originalname}: ${error instanceof Error ? error.message : 'text extraction failed'}`);
+      }
+    }
 
-    res.status(201).json({
-      message: 'Files uploaded successfully',
-      files: createdFiles,
-    });
+    res.status(201).json({ message: 'Files uploaded and text extracted successfully', files: createdFiles });
   } catch (error) {
-    console.error('Upload failed:', error);
-    res.status(500).json({ message: 'File upload failed' });
+    console.error('Upload or extraction failed:', error);
+    res.status(422).json({ message: error instanceof Error ? error.message : 'File upload or text extraction failed' });
   }
 });
 
 app.post('/api/practice/generate', (req, res) => {
   const { mode = 'weak-topic', questionCount = 10, difficulty = 'mixed' } = req.body ?? {};
 
-  res.json({
-    mode,
-    questionCount,
-    difficulty,
-    questions: [
-      {
-        id: 1,
-        question: 'Which law explains that every action has an equal and opposite reaction?',
-        answer: "Newton's Third Law",
-        explanation: "Newton's Third Law states that every action creates an equal and opposite reaction.",
-      },
-      {
-        id: 2,
-        question: 'What is the purpose of normalization in a database?',
-        answer: 'Reduce redundancy and improve data integrity',
-        explanation: 'Normalization organizes data to reduce duplication and keep the system consistent.',
-      },
-    ],
-  });
+  res.json({ mode, questionCount, difficulty, questions: [
+    { id: 1, question: 'Which law explains that every action has an equal and opposite reaction?', answer: "Newton's Third Law", explanation: "Newton's Third Law states that every action creates an equal and opposite reaction." },
+    { id: 2, question: 'What is the purpose of normalization in a database?', answer: 'Reduce redundancy and improve data integrity', explanation: 'Normalization organizes data to reduce duplication and keep the system consistent.' },
+  ] });
 });
 
 process.on('SIGINT', async () => {
