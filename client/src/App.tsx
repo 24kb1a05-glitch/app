@@ -4,6 +4,7 @@ import { UploadPanel } from './components/UploadPanel';
 import { FileLibrary } from './components/FileLibrary';
 import { PracticeGenerator } from './components/PracticeGenerator';
 import { ProgressSummary } from './components/ProgressSummary';
+import { RevisionQueue } from './components/RevisionQueue';
 import { studyFiles, stats, quickActions, recentMaterials, practiceSummary, generatedQuestions } from './data/mockData';
 
 function App() {
@@ -125,6 +126,7 @@ function App() {
             </aside>
           </section>
 
+          <RevisionQueue />
           <PracticeGenerator questions={generatedQuestions} summary={practiceSummary} />
         </main>
       </div>

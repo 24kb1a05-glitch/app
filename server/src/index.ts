@@ -308,7 +308,7 @@ app.post('/api/practice/answer', async (req, res) => {
     const topic = question.topic ?? 'General';
 
     const result = await prisma.$transaction(async (tx) => {
-      const attempt = await tx.practiceAttempt.create({
+      await tx.practiceAttempt.create({
         data: {
           userId: user.id,
           questionId,
@@ -328,7 +328,7 @@ app.post('/api/practice/answer', async (req, res) => {
 
       const totalAnswered = (existing?.totalAnswered ?? 0) + 1;
       const totalCorrect = (existing?.totalCorrect ?? 0) + (correct ? 1 : 0);
-      const mastery = totalCorrect / totalAnswered;
+      const mastery = totalAnswered ? totalCorrect / totalAnswered : 0;
 
       const progress = await tx.userProgress.upsert({
         where: {
@@ -352,7 +352,7 @@ app.post('/api/practice/answer', async (req, res) => {
         },
       });
 
-      return { attempt, progress };
+      return { progress };
     });
 
     res.json({
@@ -465,6 +465,39 @@ app.get('/api/analytics', async (_req, res) => {
   }
 });
 
+app.get('/api/recommendations', async (_req, res) => {
+  try {
+    const user = await ensureDemoUser();
+    const progress = await prisma.userProgress.findMany({
+      where: { userId: user.id },
+      orderBy: [{ mastery: 'asc' }, { totalAnswered: 'desc' }],
+    });
+
+    const recommendations = progress.map((item) => {
+      const masteryPercent = Math.round(item.mastery * 100);
+      return {
+        topic: item.topic,
+        mastery: item.mastery,
+        masteryPercent,
+        totalAnswered: item.totalAnswered,
+        totalCorrect: item.totalCorrect,
+        priority: item.mastery < 0.5 ? 'High' : item.mastery < 0.75 ? 'Medium' : 'Low',
+        nextAction:
+          item.mastery < 0.5
+            ? 'Review the core ideas and retest this topic soon.'
+            : item.mastery < 0.75
+              ? 'Practice a short follow-up set to strengthen recall.'
+              : 'Keep the streak going with one quick review pass.',
+      };
+    });
+
+    res.json({ recommendations });
+  } catch (error) {
+    console.error('Failed to load recommendations:', error);
+    res.status(500).json({ message: 'Unable to load recommendations' });
+  }
+});
+
 process.on('SIGINT', async () => {
   await prisma.$disconnect();
   process.exit(0);
@@ -473,4 +506,3 @@ process.on('SIGINT', async () => {
 app.listen(PORT, () => {
   console.log(`LearnPath AI server running on http://localhost:${PORT}`);
 });
-
