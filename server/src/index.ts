@@ -50,7 +50,6 @@ function buildQuestions(text: string, fileName: string, questionCount: number) {
 
   const usablePassages = passages.length ? passages : [text.replace(/\s+/g, ' ').trim()];
   return Array.from({ length: Math.min(questionCount, usablePassages.length) }, (_, index) => ({
-    id: index + 1,
     question: `What key point is stated in this passage from ${fileName}?`,
     answer: usablePassages[index],
     explanation: 'This answer is taken directly from the extracted study material.',
@@ -82,16 +81,16 @@ app.get('/api/files', async (_req, res) => {
       },
     });
 
-    const files = materials.map((material) => ({
-      id: material.id,
-      name: material.fileName,
-      subject: material.subject ?? material.topic ?? 'Uncategorized',
-      status: material.processingStatus,
-      type: material.fileType.toUpperCase(),
-      size: material.fileSize,
-    }));
-
-    res.json({ files });
+    res.json({
+      files: materials.map((material) => ({
+        id: material.id,
+        name: material.fileName,
+        subject: material.subject ?? material.topic ?? 'Uncategorized',
+        status: material.processingStatus,
+        type: material.fileType.toUpperCase(),
+        size: material.fileSize,
+      })),
+    });
   } catch (error) {
     console.error('Failed to load files from database:', error);
     res.status(500).json({ message: 'Unable to load files' });
@@ -214,7 +213,21 @@ app.post('/api/practice/generate', async (req, res) => {
     const safeQuestionCount = Number.isFinite(parsedQuestionCount)
       ? Math.max(1, Math.min(Math.floor(parsedQuestionCount), 20))
       : 10;
-    const questions = buildQuestions(text, material.fileName, safeQuestionCount);
+    const generatedQuestions = buildQuestions(text, material.fileName, safeQuestionCount);
+
+    const savedQuestions = await prisma.$transaction(
+      generatedQuestions.map((question) => prisma.practiceQuestion.create({
+        data: {
+          documentId: fileId,
+          topic: 'General',
+          question: question.question,
+          options: JSON.stringify([]),
+          answer: question.answer,
+          explanation: question.explanation,
+          difficulty,
+        },
+      })),
+    );
 
     res.json({
       mode,
@@ -222,11 +235,32 @@ app.post('/api/practice/generate', async (req, res) => {
       fileId,
       fileName: material.fileName,
       status: material.processingStatus,
-      questions,
+      questions: savedQuestions.map((question) => ({
+        id: question.id,
+        question: question.question,
+        answer: question.answer,
+        explanation: question.explanation,
+        source: material.fileName,
+      })),
     });
   } catch (error) {
     console.error('Practice generation failed:', error);
     res.status(500).json({ message: 'Unable to generate practice from this file.' });
+  }
+});
+
+app.get('/api/files/:id/questions', async (req, res) => {
+  try {
+    const questions = await prisma.practiceQuestion.findMany({
+      where: { documentId: req.params.id },
+      orderBy: { id: 'asc' },
+      select: { id: true, question: true, answer: true, explanation: true, difficulty: true },
+    });
+
+    res.json({ questions });
+  } catch (error) {
+    console.error('Failed to load saved questions:', error);
+    res.status(500).json({ message: 'Unable to load saved questions' });
   }
 });
 
