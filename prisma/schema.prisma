@@ -14,39 +14,77 @@ model User {
   createdAt     DateTime        @default(now())
   files         StudyMaterial[]
   progress      UserProgress[]
+  weakTopics    WeakTopic[]
+  sessions      StudySession[]
   attempts      PracticeAttempt[]
 }
 
 model StudyMaterial {
-  id              String         @id @default(cuid())
+  id              String           @id @default(cuid())
   userId          String
-  user            User           @relation(fields: [userId], references: [id])
+  user            User             @relation(fields: [userId], references: [id])
   fileName        String
   fileType        String
   fileSize        Int
-  uploadDate      DateTime       @default(now())
+  uploadDate      DateTime         @default(now())
   subject         String?
   topic           String?
-  processingStatus String         @default("queued")
+  processingStatus String           @default("queued")
   storageLocation String
+  metadata        FileMetadata?
   extractedText   ExtractedText[]
   questions       PracticeQuestion[]
+
+  @@index([userId, uploadDate])
+}
+
+model FileMetadata {
+  id          String        @id @default(cuid())
+  documentId  String        @unique
+  document    StudyMaterial @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  mimeType    String?
+  extension   String?
+  checksum    String?
+  pageCount   Int?
+  characterCount Int?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 }
 
 model ExtractedText {
-  id            String        @id @default(cuid())
+  id            String         @id @default(cuid())
   documentId    String
-  document      StudyMaterial @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  document      StudyMaterial  @relation(fields: [documentId], references: [id], onDelete: Cascade)
   pageNumber    Int?
   section       String?
   content       String
   embedding     String?
+
+  @@index([documentId, pageNumber])
+}
+
+model StudySession {
+  id           String            @id @default(cuid())
+  userId       String
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String
+  mode         String            @default("weak-topic")
+  difficulty   String            @default("mixed")
+  status       String            @default("active")
+  questionCount Int              @default(0)
+  startedAt    DateTime          @default(now())
+  completedAt  DateTime?
+  questions    PracticeQuestion[]
+
+  @@index([userId, startedAt])
 }
 
 model PracticeQuestion {
   id          String           @id @default(cuid())
   documentId  String
   document    StudyMaterial    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  sessionId   String?
+  session     StudySession?    @relation(fields: [sessionId], references: [id], onDelete: SetNull)
   topic       String?
   question    String
   options     String
@@ -54,6 +92,9 @@ model PracticeQuestion {
   explanation String
   difficulty  String?
   attempts    PracticeAttempt[]
+
+  @@index([documentId])
+  @@index([sessionId])
 }
 
 model PracticeAttempt {
@@ -66,7 +107,7 @@ model PracticeAttempt {
   correct    Boolean
   answeredAt DateTime         @default(now())
 
-  @@index([userId])
+  @@index([userId, answeredAt])
   @@index([questionId])
 }
 
@@ -82,4 +123,20 @@ model UserProgress {
 
   @@unique([userId, topic])
   @@index([userId])
+}
+
+model WeakTopic {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic          String
+  mastery        Float    @default(0)
+  priority       String   @default("medium")
+  reviewCount    Int      @default(0)
+  lastReviewedAt DateTime?
+  nextReviewAt   DateTime?
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userId, topic])
+  @@index([userId, priority])
 }
